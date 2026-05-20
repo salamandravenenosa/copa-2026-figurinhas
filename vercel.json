@@ -3,10 +3,7 @@
   "functions": {
     "src/server.js": {
       "maxDuration": 60,
-      "includeFiles": [
-        "public/figurinha-brasil.jpg",
-        "public/brasil-camisa.jpg"
-      ]
+      "includeFiles": "public/{figurinha-brasil.jpg,brasil-camisa.jpg}"
     }
   },
   "builds": [
