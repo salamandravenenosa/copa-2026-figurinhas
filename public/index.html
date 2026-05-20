@@ -423,26 +423,54 @@
       text-transform: uppercase;
       transition: transform .12s, box-shadow .2s, background .2s, color .2s;
       text-decoration: none;
+      font-weight: 600;
     }
     .btn:active { transform: scale(.97); }
     .btn-primary {
       width: 100%;
       padding: 17px 28px;
-      color: var(--white);
-      background: linear-gradient(135deg, var(--copa-700), var(--copa-900));
-      box-shadow: 0 8px 30px rgba(0,51,160,.55);
+      color: var(--copa-900);
+      background: linear-gradient(135deg, var(--yellow), var(--gold));
+      box-shadow: 0 8px 30px rgba(201,151,30,.45), 0 0 20px rgba(255,237,0,.3);
+      border: 2px solid var(--gold);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #fff59d, var(--yellow));
+      box-shadow: 0 10px 40px rgba(201,151,30,.55), 0 0 30px rgba(255,237,0,.4);
+      transform: translateY(-2px);
     }
     .btn-secondary {
       padding: 14px 20px;
-      color: var(--copa-700);
-      background: var(--white);
-      border: 2px solid var(--copa-700);
+      color: var(--white);
+      background: rgba(255,255,255,.12);
+      border: 2px solid rgba(255,255,255,.4);
+      backdrop-filter: blur(4px);
+    }
+    .btn-secondary:hover {
+      background: rgba(255,255,255,.2);
+      border-color: var(--white);
     }
     .btn-ghost {
       padding: 13px 20px;
-      color: var(--gray-600);
+      color: var(--white);
       background: transparent;
-      border: 2px solid var(--gray-200);
+      border: 2px solid rgba(255,255,255,.25);
+    }
+    .btn-ghost:hover {
+      border-color: rgba(255,255,255,.5);
+      background: rgba(255,255,255,.05);
+    }
+
+    /* Botão na tela gold (fundo claro) */
+    .screen.gold .btn-primary {
+      color: var(--white);
+      background: linear-gradient(135deg, var(--green-600), var(--green-700));
+      border: 2px solid var(--green-400);
+      box-shadow: 0 8px 30px rgba(0,107,63,.45), 0 0 20px rgba(0,166,81,.3);
+    }
+    .screen.gold .btn-primary:hover {
+      background: linear-gradient(135deg, var(--green-400), var(--green-600));
+      box-shadow: 0 10px 40px rgba(0,107,63,.55), 0 0 30px rgba(0,166,81,.4);
     }
     .btn-row {
       display: flex;
@@ -833,6 +861,67 @@
       border-radius: 99px;
       overflow: hidden;
       background: var(--gray-50);
+    }
+
+    /* ==================== SORTEIO BANNER ==================== */
+    .sorteio-banner {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 24px;
+      padding: 16px;
+      background: linear-gradient(135deg, rgba(0,107,63,.15), rgba(201,151,30,.2));
+      border: 1px dashed var(--gold);
+      border-radius: 16px;
+      text-align: left;
+    }
+    .sorteio-icon {
+      font-size: 40px;
+      flex-shrink: 0;
+      animation: pulse-light 2s ease-in-out infinite;
+    }
+    .sorteio-content { flex: 1; }
+    .sorteio-title {
+      font-family: var(--display);
+      font-size: 14px;
+      letter-spacing: 2px;
+      color: var(--gold);
+      margin-bottom: 2px;
+    }
+    .sorteio-amount {
+      font-family: var(--display);
+      font-size: 32px;
+      color: var(--green-400);
+      letter-spacing: 2px;
+      text-shadow: 0 0 20px rgba(0,166,81,.4);
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .sorteio-desc {
+      font-size: 11px;
+      color: var(--gray-600);
+      line-height: 1.5;
+    }
+
+    /* SORTEIO BADGE TELA FINAL */
+    .sorteio-badge-final {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: rgba(0,107,63,.2);
+      border: 1px solid var(--green-400);
+      border-radius: 100px;
+      margin-bottom: 16px;
+      animation: pulse-light 2s ease-in-out infinite;
+    }
+    .sorteio-badge-icon { font-size: 18px; }
+    .sorteio-badge-text {
+      font-size: 13px;
+      color: var(--white);
+    }
+    .sorteio-badge-text strong {
+      color: var(--green-400);
     }
     .generation-frame {
       width: 238px;
@@ -1325,6 +1414,48 @@
           <div class="load-top"><span id="l2-label">Enviando dados</span><span id="l2-pct">0%</span></div>
           <div class="load-track"><div id="l2-bar" class="load-fill" style="width:0%"></div></div>
         </div>
+        
+        <!-- SORTEIO BANNER -->
+        <div class="sorteio-banner">
+          <div class="sorteio-icon">
+            <svg width="48" height="48" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style="stop-color:#FFD700"/>
+                  <stop offset="50%" style="stop-color:#FFA500"/>
+                  <stop offset="100%" style="stop-color:#FFD700"/>
+                </linearGradient>
+                <linearGradient id="goldGrad2" x1="0%" y1="100%" x2="100%" y2="0%">
+                  <stop offset="0%" style="stop-color:#B8860B"/>
+                  <stop offset="50%" style="stop-color:#FFD700"/>
+                  <stop offset="100%" style="stop-color:#B8860B"/>
+                </linearGradient>
+              </defs>
+              <!-- Caixa base -->
+              <rect x="8" y="28" width="48" height="32" rx="4" fill="url(#goldGrad)" stroke="#B8860B" stroke-width="2"/>
+              <!-- Tampa -->
+              <rect x="4" y="20" width="56" height="12" rx="3" fill="url(#goldGrad2)" stroke="#B8860B" stroke-width="2"/>
+              <!-- Fita vertical -->
+              <rect x="27" y="8" width="10" height="52" fill="#C9971E" stroke="#8B6914" stroke-width="1"/>
+              <!-- Fita horizontal -->
+              <rect x="4" y="22" width="56" height="8" fill="#C9971E" stroke="#8B6914" stroke-width="1"/>
+              <!-- Laço esquerdo -->
+              <ellipse cx="22" cy="14" rx="10" ry="8" fill="url(#goldGrad)" stroke="#B8860B" stroke-width="2"/>
+              <!-- Laço direito -->
+              <ellipse cx="42" cy="14" rx="10" ry="8" fill="url(#goldGrad)" stroke="#B8860B" stroke-width="2"/>
+              <!-- Centro do laço -->
+              <circle cx="32" cy="14" r="5" fill="#FFD700" stroke="#B8860B" stroke-width="1.5"/>
+              <!-- Brilhos -->
+              <circle cx="14" cy="10" r="2" fill="#FFF" opacity="0.8"/>
+              <circle cx="50" cy="10" r="1.5" fill="#FFF" opacity="0.6"/>
+              <circle cx="32" cy="6" r="1.5" fill="#FFF" opacity="0.7"/>
+            </svg>
+          </div>
+          <div class="sorteio-content">
+            <div class="sorteio-title">SORTEIO EXCLUSIVO PARA COMPRADORES</div>
+            <div class="sorteio-amount">R$ 1.000,00</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1347,6 +1478,30 @@
         <div id="final-image" class="final-image protected-figure hidden" role="img" aria-label="Figurinha personalizada pronta"></div>
         <div id="final-sticker" class="mini-sticker big-sticker"></div>
         <p class="success-copy">Para receber o arquivo final, avance para o checkout. O preview fica protegido com marca d'água.</p>
+        
+        <!-- SORTEIO BADGE NA TELA FINAL -->
+        <div class="sorteio-badge-final">
+          <span class="sorteio-badge-icon">
+            <svg width="22" height="22" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="goldGradSm" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style="stop-color:#FFD700"/>
+                  <stop offset="50%" style="stop-color:#FFA500"/>
+                  <stop offset="100%" style="stop-color:#FFD700"/>
+                </linearGradient>
+              </defs>
+              <rect x="8" y="28" width="48" height="32" rx="4" fill="url(#goldGradSm)" stroke="#B8860B" stroke-width="2"/>
+              <rect x="4" y="20" width="56" height="12" rx="3" fill="#FFD700" stroke="#B8860B" stroke-width="2"/>
+              <rect x="27" y="8" width="10" height="52" fill="#C9971E"/>
+              <rect x="4" y="22" width="56" height="8" fill="#C9971E"/>
+              <ellipse cx="22" cy="14" rx="10" ry="8" fill="url(#goldGradSm)" stroke="#B8860B" stroke-width="2"/>
+              <ellipse cx="42" cy="14" rx="10" ry="8" fill="url(#goldGradSm)" stroke="#B8860B" stroke-width="2"/>
+              <circle cx="32" cy="14" r="5" fill="#FFD700" stroke="#B8860B" stroke-width="1.5"/>
+            </svg>
+          </span>
+          <span class="sorteio-badge-text">Sorteio <strong>R$ 1.000</strong> para compradores</span>
+        </div>
+        
         <div class="price">R$12,90</div>
         <button class="btn btn-primary" onclick="checkout()" aria-label="Ir para pagamento da figurinha">Receber minha figurinha</button>
         <div class="share-row">
