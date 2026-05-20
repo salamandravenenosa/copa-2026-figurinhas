@@ -3,7 +3,7 @@
   "functions": {
     "api/[...path].js": {
       "maxDuration": 60,
-      "includeFiles": "public/{figurinha-brasil.jpg,brasil-camisa.jpg}"
+      "includeFiles": "public/**"
     }
   },
   "rewrites": [

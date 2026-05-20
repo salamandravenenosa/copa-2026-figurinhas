@@ -22,6 +22,8 @@ const outputDir = path.join(publicDir, 'output');
 const runtimeDir = isVercel ? path.join('/tmp', 'figurinha-copa') : outputDir;
 const mockupPath = path.join(publicDir, 'figurinha-brasil.jpg');
 const shirtReferencePath = path.join(publicDir, 'brasil-camisa.jpg');
+const regularFontPath = path.join(publicDir, 'fonts', 'LiberationSans-Regular.ttf');
+const boldFontPath = path.join(publicDir, 'fonts', 'LiberationSans-Bold.ttf');
 const jobs = new Map();
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -71,7 +73,9 @@ app.get(['/health', '/api/health'], (_req, res) => {
     openaiImageQuality: process.env.OPENAI_IMAGE_QUALITY || 'medium',
     assets: {
       mockup: fs.existsSync(mockupPath),
-      shirtReference: fs.existsSync(shirtReferencePath)
+      shirtReference: fs.existsSync(shirtReferencePath),
+      regularFont: fs.existsSync(regularFontPath),
+      boldFont: fs.existsSync(boldFontPath)
     },
     runtime: {
       vercel: isVercel,
@@ -191,7 +195,8 @@ async function generatePlayerImage(originalPath, outputPath, data) {
     'Keep the same face identity, hair, skin tone, age impression and expression from the uploaded person.',
     'Use the second image as the official Brazil shirt reference: yellow Brazil football jersey, green collar/details, crest placement and athletic pose.',
     'The output must be a single person only, from thighs or waist up, centered, crisp edges, transparent background.',
-    'No room, no furniture, no outdoor background, no text outside the jersey, no watermark.',
+    'Do not create any sticker frame, card, border, white rectangle, label, flag badge, caption, number, nameplate, text, watermark, or background.',
+    'Only the person wearing the Brazil jersey should be visible.',
     `Player name for context: ${data.nome}. Club for context: ${data.clube}.`
   ].join(' ');
 
@@ -236,7 +241,8 @@ async function composeSticker({ id, data, playerPath }) {
     height: 0.043
   });
 
-  const fittedPlayer = await sharp(playerPath)
+  const cleanedPlayer = await removeNearWhiteBackground(playerPath);
+  const fittedPlayer = await sharp(cleanedPlayer)
     .rotate()
     .resize(playerBox.width, playerBox.height, {
       fit: 'contain',
@@ -311,16 +317,20 @@ function buildStickerSvg({ id, data, width, height, nameBar, clubBar }) {
     const y = Math.round(-height * 0.08 + row * height * 0.12);
     return `<text x="${Math.round(-width * 0.45)}" y="${y}" class="wmAlt">${watermark} - USO NAO AUTORIZADO - ${jobMark}</text>`;
   }).join('');
+  const regularFont = fontDataUri(regularFontPath);
+  const boldFont = fontDataUri(boldFontPath);
 
   return `
     <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
       <style>
-        .name { font: 800 ${Math.round(height * 0.049)}px Arial, sans-serif; fill: #fff; letter-spacing: 1.5px; }
-        .details { font: 400 ${Math.round(height * 0.029)}px Arial, sans-serif; fill: #fff; letter-spacing: .6px; }
-        .club { font: 500 ${Math.round(height * 0.028)}px Arial, sans-serif; fill: #fff; letter-spacing: .8px; }
-        .wm { font: 900 ${Math.round(height * 0.030)}px Arial, sans-serif; fill: rgba(255,255,255,.42); letter-spacing: 3px; }
-        .wmAlt { font: 900 ${Math.round(height * 0.023)}px Arial, sans-serif; fill: rgba(0,0,0,.24); letter-spacing: 2px; }
-        .wmSmall { font: 900 ${Math.round(height * 0.022)}px Arial, sans-serif; fill: rgba(255,255,255,.72); letter-spacing: 2px; }
+        @font-face { font-family: "StickerSans"; src: url("${regularFont}") format("truetype"); font-weight: 400; }
+        @font-face { font-family: "StickerSans"; src: url("${boldFont}") format("truetype"); font-weight: 800; }
+        .name { font: 800 ${Math.round(height * 0.049)}px StickerSans, sans-serif; fill: #fff; letter-spacing: 1.5px; }
+        .details { font: 400 ${Math.round(height * 0.029)}px StickerSans, sans-serif; fill: #fff; letter-spacing: .6px; }
+        .club { font: 400 ${Math.round(height * 0.028)}px StickerSans, sans-serif; fill: #fff; letter-spacing: .8px; }
+        .wm { font: 800 ${Math.round(height * 0.030)}px StickerSans, sans-serif; fill: rgba(255,255,255,.42); letter-spacing: 3px; }
+        .wmAlt { font: 800 ${Math.round(height * 0.023)}px StickerSans, sans-serif; fill: rgba(0,0,0,.24); letter-spacing: 2px; }
+        .wmSmall { font: 800 ${Math.round(height * 0.022)}px StickerSans, sans-serif; fill: rgba(255,255,255,.72); letter-spacing: 2px; }
       </style>
       <g transform="rotate(-28 ${width / 2} ${height / 2})">${wmLines}</g>
       <g transform="rotate(24 ${width / 2} ${height / 2})">${wmReverseLines}</g>
@@ -339,6 +349,31 @@ function box(width, height, ratio) {
     width: Math.round(width * ratio.width),
     height: Math.round(height * ratio.height)
   };
+}
+
+function fontDataUri(filePath) {
+  const data = fs.readFileSync(filePath).toString('base64');
+  return `data:font/truetype;base64,${data}`;
+}
+
+async function removeNearWhiteBackground(input) {
+  const image = sharp(input).ensureAlpha();
+  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+  for (let i = 0; i < data.length; i += info.channels) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    if (r > 245 && g > 245 && b > 245) {
+      data[i + 3] = 0;
+    }
+  }
+  return sharp(data, {
+    raw: {
+      width: info.width,
+      height: info.height,
+      channels: info.channels
+    }
+  }).png().toBuffer();
 }
 
 async function assertReadable(filePath, code) {
