@@ -105,14 +105,14 @@ app.post('/api/stickers', upload.single('photo'), async (req, res) => {
     }
 
     const id = crypto.randomUUID();
-    const originalPath = path.join(runtimeDir, `${id}-original.jpg`);
+    const originalPath = path.join(runtimeDir, `${id}-original.png`);
     const playerPath = path.join(runtimeDir, `${id}-player.png`);
     const stickerPath = path.join(outputDir, `${id}.png`);
 
     await sharp(req.file.buffer)
       .rotate()
       .resize(1400, 1400, { fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 92 })
+      .png({ compressionLevel: 9 })
       .toFile(originalPath);
 
     const sourcePlayerPath = await generatePlayerImage(originalPath, playerPath, data);
