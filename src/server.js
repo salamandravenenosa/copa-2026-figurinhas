@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 
 import express from 'express';
 import multer from 'multer';
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import sharp from 'sharp';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -111,7 +111,7 @@ app.post('/api/stickers', upload.single('photo'), async (req, res) => {
 
     await sharp(req.file.buffer)
       .rotate()
-      .resize(1400, 1400, { fit: 'inside', withoutEnlargement: true })
+      .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
       .png({ compressionLevel: 9 })
       .toFile(originalPath);
 
@@ -171,6 +171,20 @@ async function generatePlayerImage(originalPath, outputPath, data) {
   await assertReadable(shirtReferencePath, 'SHIRT_REFERENCE_MISSING');
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const sourceUpload = await toFile(
+    await fsp.readFile(originalPath),
+    'source.png',
+    { type: 'image/png' }
+  );
+  const shirtReferencePng = await sharp(shirtReferencePath)
+    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+  const shirtUpload = await toFile(
+    shirtReferencePng,
+    'brasil-camisa.png',
+    { type: 'image/png' }
+  );
   const prompt = [
     'Use the first image only as identity reference for the person face. Do not reuse the original photo background.',
     'Create a clean collectible football sticker player portrait, like a World Cup sticker.',
@@ -183,10 +197,7 @@ async function generatePlayerImage(originalPath, outputPath, data) {
 
   const response = await client.images.edit({
     model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1.5',
-    image: [
-      fs.createReadStream(originalPath),
-      fs.createReadStream(shirtReferencePath)
-    ],
+    image: [sourceUpload, shirtUpload],
     prompt,
     background: 'transparent',
     size: '1024x1024',
