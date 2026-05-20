@@ -1814,76 +1814,146 @@
       document.getElementById('l2-pct').textContent = '0%';
       document.getElementById('l2pct-top').textContent = '0%';
       renderSticker('preview-sticker');
-      
-      let value = 0;
-      let done = false;
+
+      let progress = 0;
       let startTime = Date.now();
-      const captions = [
-        ['Enviando dados', 'Renderizacao segura'],
-        ['Analisando rosto', 'Preparando troca facial'],
-        ['Aplicando no mockup', 'Encaixando na figurinha'],
-        ['Gravando dados', 'Nome, clube e estatisticas'],
-        ['Finalizando marca dagua', 'Protegendo preview']
+      let requestDone = false;
+      let requestFailed = false;
+      let failMessage = '';
+      const MAX_TIME = 100000; // 100 segundos máximo
+      let requestPromise = null;
+
+      // Fases do carregamento (tempo acumulado em ms, progresso alvo)
+      const phases = [
+        { time: 0,    target: 5,   label: 'Enviando dados',        chip: 'Conexao segura' },
+        { time: 3000, target: 15,  label: 'Processando foto',      chip: 'Identificando rosto' },
+        { time: 8000, target: 30,  label: 'Analisando rosto',      chip: 'Mapeando caracteristicas' },
+        { time: 15000, target: 50, label: 'Gerando novo rosto',    chip: 'Troca facial via IA' },
+        { time: 30000, target: 70, label: 'Integrando na figurinha', chip: 'Composicao do mockup' },
+        { time: 45000, target: 85, label: 'Aplicando seus dados',  chip: 'Nome, clube, estatisticas' },
+        { time: 60000, target: 92, label: 'Finalizando',           chip: 'Renderizando marca dagua' },
+        { time: 80000, target: 97, label: 'Quase pronto',          chip: 'Ultimos ajustes' }
       ];
-      let captionIndex = 0;
 
-      const timer = addInterval(() => {
-        captionIndex = Math.min(Math.floor(value / 22), captions.length - 1);
-        document.getElementById('l2-label').textContent = captions[captionIndex][0];
-        document.getElementById('l2-chip').textContent = captions[captionIndex][1];
-        
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const timeStr = `${elapsed}s`;
-
-        if (!done) {
-          value += Math.random() * 3 + 0.8;
-          if (value > 95) value = 95;
-        } else {
-          value += (100 - value) * 0.15 + 2;
-          if (value >= 100) {
-            value = 100;
-            clearInterval(timer);
-            timers.delete(timer);
-            addTimeout(() => go('s7'), 400);
-          }
+      function getCurrentPhase(elapsed) {
+        let current = phases[0];
+        for (const phase of phases) {
+          if (elapsed >= phase.time) current = phase;
         }
-        
-        const pct = `${Math.round(value)}%`;
-        document.getElementById('l2-bar').style.width = `${value}%`;
-        document.getElementById('l2bar-top').style.width = `${value}%`;
-        document.getElementById('l2-pct').textContent = pct;
-        document.getElementById('l2pct-top').textContent = pct;
-        document.getElementById('l2-sub').textContent = `Gerando figurinha... ${timeStr} decorridos`;
+        return current;
+      }
+
+      function interpolateProgress(elapsed) {
+        if (requestDone) return 100;
+
+        const phase = getCurrentPhase(elapsed);
+        const nextPhaseIndex = phases.findIndex(p => p.time === phase.time) + 1;
+        const nextPhase = phases[nextPhaseIndex] || { time: MAX_TIME, target: 99 };
+
+        if (elapsed < phase.time) return phase.target;
+
+        const phaseDuration = nextPhase.time - phase.time;
+        const elapsedInPhase = elapsed - phase.time;
+        const phaseProgress = Math.min(elapsedInPhase / phaseDuration, 1);
+
+        // Ease in-out para progresso suave
+        const eased = phaseProgress < 0.5
+          ? 2 * phaseProgress * phaseProgress
+          : 1 - Math.pow(-2 * phaseProgress + 2, 2) / 2;
+
+        const range = nextPhase.target - phase.target;
+        return phase.target + (range * eased);
+      }
+
+      // Iniciar request em paralelo
+      requestPromise = submitSticker()
+        .then(result => {
+          D.stickerId = result.id;
+          D.generatedImageUrl = result.imageUrl || '';
+          D.generatedImageDataUrl = result.imageDataUrl || '';
+          requestDone = true;
+        })
+        .catch(error => {
+          requestFailed = true;
+          failMessage = error.message || 'Nao foi possivel gerar a figurinha. Tente novamente.';
+        });
+
+      // Timer da barra de progresso
+      const timer = addInterval(() => {
+        const elapsed = Date.now() - startTime;
+
+        // Timeout de 100 segundos
+        if (elapsed > MAX_TIME && !requestDone) {
+          clearInterval(timer);
+          timers.delete(timer);
+          document.getElementById('l2-sub').textContent = 'Tempo esgotado. A geracao demorou mais que o esperado.';
+          document.getElementById('l2-label').textContent = 'Timeout';
+          document.getElementById('l2-chip').textContent = 'Tente novamente';
+          const card = document.querySelector('#s6 .card');
+          const retry = document.createElement('button');
+          retry.className = 'btn btn-primary';
+          retry.style.marginTop = '18px';
+          retry.textContent = 'Tentar novamente';
+          retry.onclick = () => go('s6');
+          if (!card.querySelector('[data-retry]')) {
+            retry.dataset.retry = 'true';
+            card.appendChild(retry);
+          }
+          return;
+        }
+
+        // Se deu erro, mostrar erro
+        if (requestFailed) {
+          clearInterval(timer);
+          timers.delete(timer);
+          document.getElementById('l2-sub').textContent = failMessage;
+          document.getElementById('l2-label').textContent = 'Erro na geracao';
+          document.getElementById('l2-chip').textContent = 'Revise os dados';
+          document.getElementById('l2-bar').style.width = '0%';
+          document.getElementById('l2bar-top').style.width = '0%';
+          document.getElementById('l2-pct').textContent = '0%';
+          document.getElementById('l2pct-top').textContent = '0%';
+          const card = document.querySelector('#s6 .card');
+          const retry = document.createElement('button');
+          retry.className = 'btn btn-primary';
+          retry.style.marginTop = '18px';
+          retry.textContent = 'Tentar novamente';
+          retry.onclick = () => go('s6');
+          if (!card.querySelector('[data-retry]')) {
+            retry.dataset.retry = 'true';
+            card.appendChild(retry);
+          }
+          return;
+        }
+
+        // Calcular progresso
+        progress = interpolateProgress(elapsed);
+        if (requestDone && progress < 98) progress = 98;
+        if (requestDone && elapsed > 500) progress = 100;
+
+        // Atualizar UI
+        const phase = getCurrentPhase(elapsed);
+        const pct = Math.round(progress);
+        const elapsedSec = Math.floor(elapsed / 1000);
+
+        document.getElementById('l2-label').textContent = phase.label;
+        document.getElementById('l2-chip').textContent = phase.chip;
+        document.getElementById('l2-bar').style.width = `${pct}%`;
+        document.getElementById('l2bar-top').style.width = `${pct}%`;
+        document.getElementById('l2-pct').textContent = `${pct}%`;
+        document.getElementById('l2pct-top').textContent = `${pct}%`;
+        document.getElementById('l2-sub').textContent = `Gerando figurinha... ${elapsedSec}s decorridos`;
+
+        // Se completo, ir para tela s7
+        if (requestDone && progress >= 100) {
+          clearInterval(timer);
+          timers.delete(timer);
+          addTimeout(() => go('s7'), 300);
+        }
       }, 100);
 
-      try {
-        const result = await submitSticker();
-        D.stickerId = result.id;
-        D.generatedImageUrl = result.imageUrl || '';
-        D.generatedImageDataUrl = result.imageDataUrl || '';
-        done = true;
-      } catch (error) {
-        clearInterval(timer);
-        timers.delete(timer);
-        value = 0;
-        document.getElementById('l2-sub').textContent = error.message || 'Nao foi possivel gerar a figurinha. Tente novamente.';
-        document.getElementById('l2-label').textContent = 'Erro na geracao';
-        document.getElementById('l2-chip').textContent = 'Revise os dados';
-        document.getElementById('l2-bar').style.width = '0%';
-        document.getElementById('l2bar-top').style.width = '0%';
-        document.getElementById('l2-pct').textContent = '0%';
-        document.getElementById('l2pct-top').textContent = '0%';
-        const card = document.querySelector('#s6 .card');
-        const retry = document.createElement('button');
-        retry.className = 'btn btn-primary';
-        retry.style.marginTop = '18px';
-        retry.textContent = 'Tentar novamente';
-        retry.onclick = () => go('s6');
-        if (!card.querySelector('[data-retry]')) {
-          retry.dataset.retry = 'true';
-          card.appendChild(retry);
-        }
-      }
+      // Aguardar request (não bloquear a UI)
+      await requestPromise;
     }
 
     async function submitSticker() {

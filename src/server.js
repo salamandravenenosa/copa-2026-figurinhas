@@ -49,18 +49,9 @@ await Promise.all([
 
 const requiredFields = ['nome', 'email', 'dia', 'mes', 'ano', 'clube', 'peso', 'altura'];
 const months = {
-  Janeiro: '01',
-  Fevereiro: '02',
-  Março: '03',
-  Abril: '04',
-  Maio: '05',
-  Junho: '06',
-  Julho: '07',
-  Agosto: '08',
-  Setembro: '09',
-  Outubro: '10',
-  Novembro: '11',
-  Dezembro: '12'
+  Janeiro: '01', Fevereiro: '02', Março: '03', Abril: '04',
+  Maio: '05', Junho: '06', Julho: '07', Agosto: '08',
+  Setembro: '09', Outubro: '10', Novembro: '11', Dezembro: '12'
 };
 
 app.get(['/health', '/api/health'], (_req, res) => {
@@ -75,54 +66,75 @@ app.get(['/health', '/api/health'], (_req, res) => {
       regularFont: fs.existsSync(regularFontPath),
       boldFont: fs.existsSync(boldFontPath)
     },
-    runtime: {
-      vercel: isVercel,
-      node: process.version
-    },
+    runtime: { vercel: isVercel, node: process.version },
     time: new Date().toISOString()
   });
 });
 
 app.get('/api/stickers/:id', (req, res) => {
   const job = jobs.get(req.params.id);
-  if (!job) {
-    res.status(404).json({ error: 'Figurinha nao encontrada.' });
-    return;
-  }
+  if (!job) { res.status(404).json({ error: 'Figurinha nao encontrada.' }); return; }
   res.json(job);
 });
 
 app.post('/api/stickers', upload.single('photo'), async (req, res) => {
   try {
-    if (!req.file) {
-      res.status(400).json({ error: 'Envie a foto do craque.' });
-      return;
-    }
+    if (!req.file) { res.status(400).json({ error: 'Envie a foto do craque.' }); return; }
 
     const data = normalizePayload(req.body);
     const missing = requiredFields.filter(field => !data[field]);
-    if (missing.length) {
-      res.status(400).json({ error: `Campos obrigatorios: ${missing.join(', ')}.` });
-      return;
-    }
+    if (missing.length) { res.status(400).json({ error: `Campos obrigatorios: ${missing.join(', ')}.` }); return; }
 
     const id = crypto.randomUUID();
     const originalPath = path.join(runtimeDir, `${id}-original.png`);
-    const playerPath = path.join(runtimeDir, `${id}-player.png`);
+    const faceCropPath = path.join(runtimeDir, `${id}-face-crop.png`);
+    const faceResultPath = path.join(runtimeDir, `${id}-face-result.png`);
     const stickerPath = path.join(outputDir, `${id}.png`);
 
+    // 1. Salvar foto do usuário
     await sharp(req.file.buffer)
       .rotate()
       .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
       .png({ compressionLevel: 9 })
       .toFile(originalPath);
 
-    const sourcePlayerPath = await generatePlayerImage(originalPath, playerPath, data);
+    // 2. Obter metadados do mockup para calibrar posições
+    const mockupMeta = await sharp(mockupPath).metadata();
+    const mockupWidth = mockupMeta.width;
+    const mockupHeight = mockupMeta.height;
+
+    // 3. Recortar APENAS a área do rosto do mockup (região fixa do rosto)
+    // Raphinha.png: rosto fica aproximadamente em 30-50% horizontal, 8-28% vertical
+    const faceRegion = {
+      left: Math.round(mockupWidth * 0.28),
+      top: Math.round(mockupHeight * 0.06),
+      width: Math.round(mockupWidth * 0.44),
+      height: Math.round(mockupHeight * 0.32)
+    };
+
+    await sharp(mockupPath)
+      .extract(faceRegion)
+      .png()
+      .toFile(faceCropPath);
+
+    // 4. Gerar novo rosto usando OpenAI (APENAS o rosto, não o corpo)
+    const sourcePlayerPath = await generateFaceOnly(
+      originalPath,
+      faceCropPath,
+      faceResultPath,
+      data
+    );
+
+    // 5. Compor figurinha: colar rosto modificado de volta no mockup + textos
     const stickerBuffer = await composeSticker({
       id,
       data,
-      playerPath: sourcePlayerPath
+      faceResultPath: sourcePlayerPath,
+      faceRegion,
+      mockupWidth,
+      mockupHeight
     });
+
     const imageDataUrl = `data:image/png;base64,${stickerBuffer.toString('base64')}`;
     if (!isVercel) await fsp.writeFile(stickerPath, stickerBuffer);
 
@@ -131,7 +143,7 @@ app.post('/api/stickers', upload.single('photo'), async (req, res) => {
       status: 'done',
       imageUrl: isVercel ? '' : `/output/${id}.png`,
       imageDataUrl,
-      usedOpenAI: sourcePlayerPath === playerPath,
+      usedOpenAI: sourcePlayerPath === faceCropPath,
       createdAt: new Date().toISOString()
     };
     jobs.set(id, job);
@@ -156,9 +168,14 @@ if (!isVercel) {
   app.listen(PORT, () => {
     console.log(`\n  Figurinha Copa rodando em http://localhost:${PORT}`);
     console.log(`  OpenAI gera imagens: ${process.env.OPENAI_GENERATION_ENABLED === 'true' ? 'sim' : 'nao'}`);
+    console.log(`  Mockup: raphinha.png (${mockupPath})`);
     console.log(`  HTML principal: ${path.join(publicDir, 'index.html')}\n`);
   });
 }
+
+// =====================================================================
+// FUNÇÕES
+// =====================================================================
 
 function normalizePayload(body) {
   return Object.fromEntries(
@@ -166,56 +183,64 @@ function normalizePayload(body) {
   );
 }
 
-async function generatePlayerImage(originalPath, outputPath, data) {
+// Troca APENAS o rosto - edita somente a região recortada
+async function generateFaceOnly(sourcePath, faceCropPath, outputPath, data) {
   const canUseOpenAI = process.env.OPENAI_API_KEY && process.env.OPENAI_GENERATION_ENABLED === 'true';
-  if (!canUseOpenAI) return originalPath;
-  await assertReadable(originalPath, 'SOURCE_IMAGE_MISSING');
-  await assertReadable(mockupPath, 'MOCKUP_MISSING');
+  if (!canUseOpenAI) return faceCropPath; // Sem OpenAI, retorna crop original
+
+  await assertReadable(sourcePath, 'SOURCE_IMAGE_MISSING');
+  await assertReadable(faceCropPath, 'FACE_CROP_MISSING');
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  
+
+  // Upload da foto do usuário (referência de identidade)
   const sourceUpload = await toFile(
-    await fsp.readFile(originalPath),
-    'source.png',
-    { type: 'image/png' }
-  );
-  
-  const mockupUpload = await toFile(
-    await fsp.readFile(mockupPath),
-    'mockup.png', 
+    await fsp.readFile(sourcePath),
+    'face-reference.png',
     { type: 'image/png' }
   );
 
-  const structuredPrompt = JSON.stringify({
-    task: "face_swap_on_mockup",
-    instructions: {
-      step_1: "Identify the face in the SOURCE image (first image)",
-      step_2: "Identify the face region in the MOCKUP image (second image) - from top of head to middle of neck",
-      step_3: "Replace ONLY the face area in the mockup with the face from source image",
-      step_4: "Keep everything else from mockup EXACTLY the same: body, jersey, arms, background, lighting, pose, shadows",
-      step_5: "Blend the edges of the new face seamlessly into the neck area of the mockup",
-      step_6: "Match skin tone, lighting direction, and color temperature between source face and mockup body"
-    },
-    constraints: [
-      "Do NOT change the body, pose, or clothing",
-      "Do NOT change the background",
-      "Do NOT add any text, logos, or watermarks",
-      "Do NOT change image dimensions or aspect ratio",
-      "The result must look like a natural photograph",
-      "Only the facial area should be modified",
-      "Preserve the exact position and angle of the head"
-    ],
-    output: {
-      format: "photorealistic",
-      background: "same as mockup",
-      quality: "maximum detail and natural blending"
-    }
-  });
+  // Upload do rosto recortado do mockup (região a ser editada)
+  const faceCropUpload = await toFile(
+    await fsp.readFile(faceCropPath),
+    'face-to-replace.png',
+    { type: 'image/png' }
+  );
+
+  // Prompt CIRÚRGICO - troca APENAS o rosto
+  const surgicalPrompt = `CIRGURICAL FACE SWAP TASK - VERY IMPORTANT RULES:
+
+INPUT: Two images.
+Image 1 (face-reference.png): A photo of a person - use ONLY for face identity.
+Image 2 (face-to-replace.png): A cropped face region from a football sticker.
+
+YOUR TASK:
+1. Look at the FACE in Image 1 (reference) - note the identity, features, skin tone.
+2. Look at Image 2 (the crop) - this is the TARGET region.
+3. REPLACE the face in Image 2 with the face identity from Image 1.
+4. KEEP the EXACT same:
+   - Head angle and pose from Image 2
+   - Lighting direction and intensity from Image 2  
+   - Skin tone MATCHED to Image 2's surrounding skin
+   - Hair style from Image 2 (do NOT import hair from Image 1)
+   - Background color/gradient from Image 2
+   - Image dimensions of Image 2
+
+CRITICAL CONSTRAINTS:
+- Output MUST have EXACTLY the same dimensions as Image 2
+- Output MUST keep the EXACT same background as Image 2
+- ONLY the facial features (eyes, nose, mouth, cheeks) should change
+- Do NOT add any text, borders, frames, or decorations
+- Do NOT change the head shape or angle
+- Blend edges seamlessly so no seam is visible
+- The face should look like it naturally belongs in the sticker
+
+This is for a collectible football sticker. The result must look professional and seamless.`;
 
   const response = await client.images.edit({
     model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1.5',
-    image: [sourceUpload, mockupUpload],
-    prompt: structuredPrompt,
+    image: [sourceUpload, faceCropUpload],
+    prompt: surgicalPrompt,
     size: '1024x1024',
     quality: process.env.OPENAI_IMAGE_QUALITY || 'medium',
     n: 1
@@ -227,110 +252,181 @@ async function generatePlayerImage(originalPath, outputPath, data) {
   return outputPath;
 }
 
-async function composeSticker({ id, data, playerPath }) {
+// Compor figurinha: mockup original + rosto modificado + textos
+async function composeSticker({ id, data, faceResultPath, faceRegion, mockupWidth, mockupHeight }) {
   await assertReadable(mockupPath, 'MOCKUP_MISSING');
-  await assertReadable(playerPath, 'PLAYER_IMAGE_MISSING');
-  const poster = await sharp(mockupPath).metadata();
-  const width = poster.width || 720;
-  const height = poster.height || 960;
-  
-  const playerBox = box(width, height, {
-    left: 0.09,
-    top: 0.28,
-    width: 0.45,
-    height: 0.48
-  });
+  await assertReadable(faceResultPath, 'FACE_RESULT_MISSING');
+
+  const width = mockupWidth;
+  const height = mockupHeight;
+
+  // Posições dos textos (percentuais do mockup raphinha.png)
   const nameBar = box(width, height, {
     left: 0.04,
-    top: 0.81,
-    width: 0.75,
-    height: 0.065
+    top: 0.80,
+    width: 0.92,
+    height: 0.07
   });
-  const clubBar = box(width, height, {
+
+  const detailsBar = box(width, height, {
     left: 0.04,
-    top: 0.91,
-    width: 0.65,
+    top: 0.86,
+    width: 0.92,
     height: 0.05
   });
 
-  const fittedPlayer = await sharp(playerPath)
-    .rotate()
-    .resize(playerBox.width, playerBox.height, {
-      fit: 'cover',
-      position: 'center',
+  const clubBar = box(width, height, {
+    left: 0.04,
+    top: 0.91,
+    width: 0.92,
+    height: 0.06
+  });
+
+  // Redimensionar o rosto modificado para caber exatamente na região recortada
+  const fittedFace = await sharp(faceResultPath)
+    .resize(faceRegion.width, faceRegion.height, {
+      fit: 'fill',
       background: { r: 0, g: 0, b: 0, alpha: 0 }
     })
     .png()
     .toBuffer();
 
-  const overlays = await sharp({
+  // Criar máscara de blend suave nas bordas do rosto
+  const blendMask = await sharp({
     create: {
-      width,
-      height,
+      width: faceRegion.width,
+      height: faceRegion.height,
       channels: 4,
-      background: { r: 0, g: 0, b: 0, alpha: 0 }
+      background: { r: 255, g: 255, b: 255, alpha: 255 }
     }
   })
+    .blur(3)
+    .png()
+    .toBuffer();
+
+  // Aplicar máscara de blend no rosto
+  const blendedFace = await sharp(fittedFace)
     .composite([
       {
-        input: Buffer.from(buildStickerSvg({ id, data, width, height, nameBar, clubBar })),
-        left: 0,
-        top: 0
+        input: blendMask,
+        blend: 'dest-in'
       }
     ])
     .png()
     .toBuffer();
 
+  // Gerar SVG com textos
+  const svgContent = buildStickerSvg({ id, data, width, height, nameBar, detailsBar, clubBar });
+
+  // Compor tudo: mockup + rosto modificado + textos
   return sharp(mockupPath)
     .ensureAlpha()
     .composite([
-      { input: fittedPlayer, left: playerBox.left, top: playerBox.top },
-      { input: overlays, left: 0, top: 0 }
+      {
+        input: blendedFace,
+        left: faceRegion.left,
+        top: faceRegion.top,
+        blend: 'over'
+      },
+      {
+        input: Buffer.from(svgContent),
+        left: 0,
+        top: 0
+      }
     ])
     .png({ compressionLevel: 9 })
     .toBuffer();
 }
 
-function buildStickerSvg({ id, data, width, height, nameBar, clubBar }) {
+function buildStickerSvg({ id, data, width, height, nameBar, detailsBar, clubBar }) {
   const birthDate = `${data.dia}-${months[data.mes] || data.mes}-${data.ano}`;
   const heightMeters = (Number(data.altura) / 100).toFixed(2).replace('.', ',');
   const safeName = escapeXml(data.nome.toUpperCase()).slice(0, 26);
   const safeClub = escapeXml(data.clube.toUpperCase()).slice(0, 32);
-  const details = escapeXml(`${birthDate} | ${heightMeters} | ${data.peso}kg`);
+  const details = escapeXml(`${birthDate} | ${heightMeters}m | ${data.peso}kg`);
   const watermark = escapeXml(
-    process.env.WATERMARK_TEXT ||
-    'ESTA FIGURINHA TEM DIREITOS AUTORAIS - PREVIEW PROTEGIDO - NAO COPIAR'
+    process.env.WATERMARK_TEXT || 'PREVIEW PROTEGIDO - DIREITOS AUTORAIS'
   );
   const jobMark = escapeXml(id.slice(0, 8).toUpperCase());
-  const wmLines = Array.from({ length: 16 }, (_, row) => {
-    const y = Math.round(-height * 0.15 + row * height * 0.092);
-    return `<text x="${Math.round(-width * 0.55)}" y="${y}" class="wm">${watermark} - ${jobMark} - ${watermark}</text>`;
+
+  // Linhas de marca d'água diagonais
+  const wmLines = Array.from({ length: 18 }, (_, row) => {
+    const y = Math.round(-height * 0.15 + row * height * 0.085);
+    return `<text x="${Math.round(-width * 0.6)}" y="${y}" class="wm">${watermark} • ${jobMark}</text>`;
   }).join('');
-  const wmReverseLines = Array.from({ length: 12 }, (_, row) => {
-    const y = Math.round(-height * 0.08 + row * height * 0.12);
-    return `<text x="${Math.round(-width * 0.45)}" y="${y}" class="wmAlt">${watermark} - USO NAO AUTORIZADO - ${jobMark}</text>`;
-  }).join('');
+
   const regularFont = fontDataUri(regularFontPath);
   const boldFont = fontDataUri(boldFontPath);
 
+  const fontSize = {
+    name: Math.round(height * 0.052),
+    details: Math.round(height * 0.026),
+    club: Math.round(height * 0.030),
+    wm: Math.round(height * 0.028),
+    wmSmall: Math.round(height * 0.018)
+  };
+
   return `
     <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
-      <style>
-        @font-face { font-family: "StickerSans"; src: url("${regularFont}") format("truetype"); font-weight: 400; }
-        @font-face { font-family: "StickerSans"; src: url("${boldFont}") format("truetype"); font-weight: 800; }
-        .name { font: 800 ${Math.round(height * 0.049)}px StickerSans, sans-serif; fill: #fff; letter-spacing: 1.5px; }
-        .details { font: 400 ${Math.round(height * 0.029)}px StickerSans, sans-serif; fill: #fff; letter-spacing: .6px; }
-        .club { font: 400 ${Math.round(height * 0.028)}px StickerSans, sans-serif; fill: #fff; letter-spacing: .8px; }
-        .wm { font: 800 ${Math.round(height * 0.030)}px StickerSans, sans-serif; fill: rgba(255,255,255,.42); letter-spacing: 3px; }
-        .wmAlt { font: 800 ${Math.round(height * 0.023)}px StickerSans, sans-serif; fill: rgba(0,0,0,.24); letter-spacing: 2px; }
-        .wmSmall { font: 800 ${Math.round(height * 0.022)}px StickerSans, sans-serif; fill: rgba(255,255,255,.72); letter-spacing: 2px; }
-      </style>
-      <g transform="rotate(-28 ${width / 2} ${height / 2})">${wmLines}</g>
-      <g transform="rotate(24 ${width / 2} ${height / 2})">${wmReverseLines}</g>
-      <text x="${nameBar.left + nameBar.width / 2}" y="${nameBar.top + nameBar.height * 0.50}" class="name" text-anchor="middle">${safeName}</text>
-      <text x="${nameBar.left + nameBar.width / 2}" y="${nameBar.top + nameBar.height * 0.88}" class="details" text-anchor="middle">${details}</text>
-      <text x="${clubBar.left + clubBar.width / 2}" y="${clubBar.top + clubBar.height * 0.70}" class="club" text-anchor="middle">${safeClub}</text>
-      <text x="${width * 0.49}" y="${height * 0.70}" class="wmSmall" text-anchor="middle" transform="rotate(-28 ${width * 0.49} ${height * 0.70})">PREVIEW COM DIREITOS AUTORAIS - ${jobMark}</text>
+      <defs>
+        <style>
+          @font-face { font-family: "StickerFont"; src: url("${regularFont}") format("truetype"); font-weight: 400; }
+          @font-face { font-family: "StickerFont"; src: url("${boldFont}") format("truetype"); font-weight: 700; }
+        </style>
+      </defs>
+
+      <!-- Marca d'água diagonal -->
+      <g transform="rotate(-25 ${width / 2} ${height / 2})">${wmLines}</g>
+
+      <!-- Nome do jogador -->
+      <text 
+        x="${nameBar.left + nameBar.width / 2}" 
+        y="${nameBar.top + nameBar.height * 0.65}" 
+        font-family="StickerFont, sans-serif" 
+        font-size="${fontSize.name}px" 
+        font-weight="700" 
+        fill="#FFFFFF" 
+        text-anchor="middle" 
+        letter-spacing="2px"
+      >${safeName}</text>
+
+      <!-- Detalhes: data | altura | peso -->
+      <text 
+        x="${detailsBar.left + detailsBar.width / 2}" 
+        y="${detailsBar.top + detailsBar.height * 0.65}" 
+        font-family="StickerFont, sans-serif" 
+        font-size="${fontSize.details}px" 
+        font-weight="400" 
+        fill="#FFFFFF" 
+        text-anchor="middle" 
+        letter-spacing="1px"
+        opacity="0.9"
+      >${details}</text>
+
+      <!-- Clube -->
+      <text 
+        x="${clubBar.left + clubBar.width / 2}" 
+        y="${clubBar.top + clubBar.height * 0.65}" 
+        font-family="StickerFont, sans-serif" 
+        font-size="${fontSize.club}px" 
+        font-weight="700" 
+        fill="#FFFFFF" 
+        text-anchor="middle" 
+        letter-spacing="1.5px"
+      >${safeClub}</text>
+
+      <!-- Marca d'água small -->
+      <text 
+        x="${width * 0.5}" 
+        y="${height * 0.72}" 
+        font-family="StickerFont, sans-serif" 
+        font-size="${fontSize.wmSmall}px" 
+        font-weight="700" 
+        fill="rgba(255,255,255,0.6)" 
+        text-anchor="middle" 
+        transform="rotate(-25 ${width * 0.5} ${height * 0.72})"
+        letter-spacing="1px"
+      >PREVIEW • ${jobMark}</text>
     </svg>
   `;
 }
@@ -347,26 +443,6 @@ function box(width, height, ratio) {
 function fontDataUri(filePath) {
   const data = fs.readFileSync(filePath).toString('base64');
   return `data:font/truetype;base64,${data}`;
-}
-
-async function removeNearWhiteBackground(input) {
-  const image = sharp(input).ensureAlpha();
-  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
-  for (let i = 0; i < data.length; i += info.channels) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    if (r > 245 && g > 245 && b > 245) {
-      data[i + 3] = 0;
-    }
-  }
-  return sharp(data, {
-    raw: {
-      width: info.width,
-      height: info.height,
-      channels: info.channels
-    }
-  }).png().toBuffer();
 }
 
 async function assertReadable(filePath, code) {
@@ -387,13 +463,7 @@ function normalizeError(error) {
   if (status === 402 || /billing|quota|credit/i.test(error?.message || '')) code = 'OPENAI_BILLING_OR_QUOTA';
   if (status === 429) code = 'OPENAI_RATE_LIMIT';
   if (status >= 500) code = 'OPENAI_UPSTREAM_ERROR';
-
-  return {
-    code,
-    status,
-    requestId,
-    message: error?.message || 'Unknown error'
-  };
+  return { code, status, requestId, message: error?.message || 'Unknown error' };
 }
 
 function escapeXml(value) {
